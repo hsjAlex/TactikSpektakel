@@ -95,7 +95,7 @@ def build_leaderboard(users: dict) -> list:
 
         # Only show a delta when we have snapshots from genuinely different days.
         # On day 1 (or if history is corrupted), fall back to total count.
-        solved_since = (total_now - total_start) if multi_day else total_now
+        solved_since = (total_now - total_start) if multi_day else 0
 
         entries.append({
             "username":               username,
