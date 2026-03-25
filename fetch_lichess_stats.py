@@ -164,10 +164,7 @@ def main():
             storm = safe_get(perfs, "storm", "score")
             racer = safe_get(perfs, "racer", "score")
 
-            # ✅ Skip unchanged users
-            if str(puzzle_total) == last_totals.get(username):
-                print(f"[SKIP] {username} unchanged")
-                continue
+
 
             row = {
                 "timestamp": timestamp,
