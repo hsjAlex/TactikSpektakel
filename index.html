@@ -281,6 +281,10 @@
   }
 
   /* ── table ── */
+  .notyellow {
+    
+  }
+  
   .table-wrap {
     border: 1px solid var(--border);
     overflow: hidden;
@@ -299,9 +303,9 @@
     gap: 8px;
   }
 
-  .table-header span { cursor: pointer; transition: color 0.15s; user-select: none; }
-  .table-header span:hover { color: var(--gold); }
-  .table-header span.sorted { color: var(--gold); }
+  .table-header .yellow { cursor: pointer; transition: color 0.15s; user-select: none; }
+  .table-header .yellow:hover { color: var(--gold); }
+  .table-header .yellow.sorted { color: var(--gold); }
 
   .row {
     display: grid;
@@ -500,10 +504,10 @@
     <div class="table-header">
       <span>#</span>
       <span>Spieler</span>
-      <span class="sorted" id="th-solved" style="text-align:right" data-sort="puzzles_since_tracking">Gelöst ▾</span>
-      <span id="th-rating" style="text-align:right" data-sort="puzzle_rating_now">Taktik-Wertung</span>
-      <span class="col-storm" style="text-align:right" data-sort="storm_best_score">Storm</span>
-      <span class="col-racer" style="text-align:right" data-sort="racer_best_score">Racer</span>
+      <span class="sorted yellow" id="th-solved" style="text-align:right" data-sort="puzzles_since_tracking">Gelöst ▾</span>
+      <span id="th-rating" class="yellow" style="text-align:right" data-sort="puzzle_rating_now">Taktik-Wertung</span>
+      <span class="col-storm yellow" style="text-align:right" data-sort="storm_best_score">Storm</span>
+      <span class="col-racer yellow" style="text-align:right" data-sort="racer_best_score">Racer</span>
     </div>
     <div id="table-body"></div>
   </div>
