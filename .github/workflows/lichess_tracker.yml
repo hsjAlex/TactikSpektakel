@@ -2,8 +2,8 @@ name: Lichess Daily Tactics Tracker
 
 on:
   schedule:
-    # Runs every day at midnight UTC (00:00)
-    - cron: "0 0 * * *"
+    # Runs every hour
+    - cron: "0 * * * *"
   # Trigger manually from the Actions tab for testing
   workflow_dispatch:
 
@@ -45,5 +45,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/tactics_history.csv data/leaderboard.csv
-          git diff --cached --quiet || git commit -m "chore: daily tactics snapshot $(date -u +%Y-%m-%d)"
+          git diff --cached --quiet || git commit -m "chore: tactics snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           git push
