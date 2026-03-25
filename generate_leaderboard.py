@@ -57,7 +57,7 @@ def load_history(path: str) -> dict:
 
     # Sort each user's rows by date ascending
     for username in users:
-        users[username].sort(key=lambda r: r["date"])
+        users[username].sort(key=lambda r: r.get("timestamp", r.get("date", "")))
 
     return users
 
