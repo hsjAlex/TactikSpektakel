@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hessische Schachjugend — Taktik Rangliste</title>
+<title>Hessische Schachjugend — Tactic Leaderboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Crimson+Pro:ital,wght@0,300;0,600;1,300&display=swap" rel="stylesheet">
@@ -35,7 +35,7 @@
     font-family: 'DM Mono', monospace;
     font-size: 13px;
     min-height: 100vh;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   /* ── chess-pattern background ── */
@@ -281,13 +281,14 @@
   }
 
   /* ── table ── */
-  .notyellow {
-    
-  }
-  
-  .table-wrap {
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border: 1px solid var(--border);
-    overflow: hidden;
+  }
+
+  .table-wrap {
+    min-width: 560px;   /* forces scroll before content clips */
   }
 
   .table-header {
@@ -303,9 +304,9 @@
     gap: 8px;
   }
 
-  .table-header .yellow { cursor: pointer; transition: color 0.15s; user-select: none; }
-  .table-header .yellow:hover { color: var(--gold); }
-  .table-header .yellow.sorted { color: var(--gold); }
+  .table-header span { cursor: pointer; transition: color 0.15s; user-select: none; }
+  .table-header span:hover { color: var(--gold); }
+  .table-header span.sorted { color: var(--gold); }
 
   .row {
     display: grid;
@@ -464,11 +465,17 @@
   @media (max-width: 640px) {
     .podium { grid-template-columns: 1fr; }
     .podium-card { order: unset !important; }
+
+    /* On mobile: Rank | Player | Dynamic third column only */
     .table-header,
-    .row { grid-template-columns: 36px 1fr 80px 80px; }
-    .cell-storm, .cell-racer { display: none; }
-    .table-header .col-storm,
-    .table-header .col-racer { display: none; }
+    .row { grid-template-columns: 36px 1fr 90px; }
+
+    /* Hide all non-dynamic columns by default on mobile */
+    .cell-rating, .cell-storm, .cell-racer,
+    .col-rating, .col-storm, .col-racer { display: none; }
+
+    /* The active mobile column is shown via JS adding .mobile-active class */
+    .col-mobile-active, .cell-mobile-active { display: block !important; }
   }
 </style>
 </head>
@@ -477,7 +484,7 @@
 
   <header>
     <div class="header-eyebrow">♟ Hessische Schachjugend</div>
-    <h1>Taktik<span>Spektakel</span></h1>
+    <h1>Tactic<span>Scramble</span></h1>
     <p class="header-meta">
       Puzzle-Rangliste — <strong id="total-players">—</strong> Spieler
       &nbsp;·&nbsp; aktualisiert <strong id="last-updated">—</strong>
@@ -491,7 +498,7 @@
   <div class="controls">
     <div class="search-wrap">
       <span class="search-icon">⌕</span>
-      <input type="text" id="search" placeholder="Suche Spieler..." autocomplete="off">
+      <input type="text" id="search" placeholder="Search player…" autocomplete="off">
     </div>
     <button class="filter-btn active" data-sort="puzzles_since_tracking">Gelöste Aufgaben</button>
     <button class="filter-btn" data-sort="puzzle_rating_now">Taktik-Wertung</button>
@@ -499,18 +506,25 @@
     <span class="player-count" id="showing-count"></span>
   </div>
 
+  <!-- day-1 notice -->
+  <div id="tracking-notice" style="display:none; border:1px solid var(--gold-dim); background:rgba(200,168,75,0.06); padding:12px 16px; margin-bottom:16px; font-size:12px; color:var(--gold); letter-spacing:0.05em;">
+    ⚑ Tracking läuft seit heute — die Spalte „Gelöst" zeigt erst ab morgen echte Zuwächse.
+  </div>
+
   <!-- table -->
+  <div class="table-scroll">
   <div class="table-wrap">
     <div class="table-header">
       <span>#</span>
       <span>Spieler</span>
-      <span class="sorted yellow" id="th-solved" style="text-align:right" data-sort="puzzles_since_tracking">Gelöst ▾</span>
-      <span id="th-rating" class="yellow" style="text-align:right" data-sort="puzzle_rating_now">Taktik-Wertung</span>
-      <span class="col-storm yellow" style="text-align:right" data-sort="storm_best_score">Storm</span>
-      <span class="col-racer yellow" style="text-align:right" data-sort="racer_best_score">Racer</span>
+      <span class="sorted col-solved col-mobile-active" id="th-solved" style="text-align:right" data-sort="puzzles_since_tracking">Gelöst ▾</span>
+      <span id="th-rating" class="col-rating" style="text-align:right" data-sort="puzzle_rating_now">Taktik-Wertung</span>
+      <span class="col-storm" style="text-align:right" data-sort="storm_best_score">Storm</span>
+      <span class="col-racer" style="text-align:right" data-sort="racer_best_score">Racer</span>
     </div>
     <div id="table-body"></div>
   </div>
+  </div><!-- /table-scroll -->
 
   <footer>
     <span>Daten via <a href="https://lichess.org/api" target="_blank" rel="noopener">Lichess API</a> · stündlich aktualisiert</span>
@@ -575,7 +589,9 @@ function renderPodium(players) {
   podium.innerHTML = arranged.map((p, i) => {
     if (!p) return '';
     const cls = classes[i];
-    const solved = fmt(p.puzzles_since_tracking);
+    const sinceFmt2 = fmt(p.puzzles_since_tracking);
+    const podiumSolved = sinceFmt2 !== '—' ? sinceFmt2 : fmt(p.puzzles_total_now);
+    const podiumLabel  = sinceFmt2 !== '—' ? 'Aufgaben seit Tracking' : 'Aufgaben gesamt (Tracking läuft…)';
     const rating = fmt(p.puzzle_rating_now);
     return `
       <div class="podium-card ${cls}" style="order:${orders[i]}">
@@ -585,8 +601,8 @@ function renderPodium(players) {
           <a href="${lichessUrl(p.username)}" target="_blank" rel="noopener">${p.username}</a>
         </div>
         <div class="podium-solved">
-          <strong>${solved}</strong>
-          Aufgaben gelöst
+          <strong>${podiumSolved}</strong>
+          ${podiumLabel}
         </div>
         <div class="podium-rating">${rating}</div>
       </div>`;
@@ -604,7 +620,11 @@ function renderTable(players) {
 
   body.innerHTML = players.map((p, i) => {
     const isTop3 = parseInt(p.rank) <= 3;
-    const solved = fmt(p.puzzles_since_tracking);
+    const sinceFmt    = fmt(p.puzzles_since_tracking);
+    const solvedDisplay = sinceFmt;
+    const solvedTitle   = sinceFmt !== '—'
+      ? `${sinceFmt} Aufgaben seit Tracking-Start`
+      : `Noch kein Vergleichswert – Tracking seit ${p.first_seen || '?'}`;
     const rating = fmt(p.puzzle_rating_now);
     const storm  = fmt(p.storm_best_score);
     const racer  = fmt(p.racer_best_score);
@@ -623,10 +643,10 @@ function renderTable(players) {
             <a href="${lichessUrl(p.username)}" target="_blank" rel="noopener">${p.username}</a>${badgeHtml}
           </div>
         </div>
-        <div class="cell-solved">${solved}</div>
-        <div class="cell-rating">${rating}</div>
-        <div class="cell-storm">${storm === '—' ? '<span style="color:#333">—</span>' : `<span>⚡ ${storm}</span>`}</div>
-        <div class="cell-racer">${racer === '—' ? '<span style="color:#333">—</span>' : `<span>🏁 ${racer}</span>`}</div>
+        <div class="cell-solved cell-mobile-active" data-mobile-col="puzzles_since_tracking" title="${solvedTitle}">${solvedDisplay}</div>
+        <div class="cell-rating" data-mobile-col="puzzle_rating_now">${rating}</div>
+        <div class="cell-storm" data-mobile-col="storm_best_score">${storm === '—' ? '<span style="color:#333">—</span>' : `<span>⚡ ${storm}</span>`}</div>
+        <div class="cell-racer" data-mobile-col="racer_best_score">${racer === '—' ? '<span style="color:#333">—</span>' : `<span>🏁 ${racer}</span>`}</div>
       </div>`;
   }).join('');
 }
@@ -684,7 +704,12 @@ async function loadData() {
     document.getElementById('last-updated').textContent = displayDate;
     document.getElementById('total-players').textContent = allPlayers.length;
 
+    // Show day-1 notice if no delta data exists yet
+    const hasDeltas = allPlayers.some(p => p.puzzles_since_tracking !== '' && p.puzzles_since_tracking !== 'None');
+    document.getElementById('tracking-notice').style.display = hasDeltas ? 'none' : 'block';
+
     render();
+    updateMobileCells(sortKey);
   } catch (e) {
     document.getElementById('table-body').innerHTML =
       '<div class="empty">leaderboard.csv konnte nicht geladen werden — bitte prüfen, ob die Datei unter data/leaderboard.csv liegt.</div>';
@@ -696,6 +721,7 @@ async function loadData() {
 document.getElementById('search').addEventListener('input', e => {
   searchTerm = e.target.value.trim().toLowerCase();
   render();
+  updateMobileCells(sortKey);
 });
 
 function setSort(key) {
@@ -706,17 +732,29 @@ function setSort(key) {
     b.classList.toggle('active', b.dataset.sort === key);
   });
 
-  // Update table header highlights
+  // Update table header highlights + mobile active column
   document.querySelectorAll('.table-header span[data-sort]').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.sort === key);
-    if (th.dataset.sort === key) {
+    const active = th.dataset.sort === key;
+    th.classList.toggle('sorted', active);
+    th.classList.toggle('col-mobile-active', active);
+    if (active) {
       th.textContent = th.textContent.replace(' ▴','').replace(' ▾','') + ' ▾';
     } else {
       th.textContent = th.textContent.replace(' ▴','').replace(' ▾','');
     }
   });
 
+  // Update mobile-active class on all data cells
+  // We do this after render() so cells exist in DOM
   render();
+  updateMobileCells(key);
+}
+
+function updateMobileCells(key) {
+  document.querySelectorAll('.row [data-mobile-col]').forEach(cell => {
+    const isActive = cell.dataset.mobileCol === key;
+    cell.classList.toggle('cell-mobile-active', isActive);
+  });
 }
 
 document.querySelectorAll('.filter-btn').forEach(btn => {
