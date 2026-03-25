@@ -135,56 +135,77 @@ def main():
 
     rows = []
 
+    def process_user(user):
+        """Extract a row dict from a Lichess user object."""
+        username = user.get("username")
+        if not username or username in already_recorded:
+            return None
+
+        perfs = user.get("perfs", {})
+
+        bullet = safe_get(perfs, "bullet", "rating")
+        blitz  = safe_get(perfs, "blitz",  "rating")
+        rapid  = safe_get(perfs, "rapid",  "rating")
+
+        available = [r for r in [bullet, blitz, rapid] if r is not None]
+        avg = round(sum(available) / len(available), 1) if available else None
+
+        puzzle      = perfs.get("puzzle", {})
+        puzzle_r    = puzzle.get("rating")
+        puzzle_rd   = puzzle.get("rd")
+        puzzle_prog = puzzle.get("prog")
+        puzzle_total= puzzle.get("games")
+
+        storm = safe_get(perfs, "storm", "score")
+        racer = safe_get(perfs, "racer", "score")
+
+        return {
+            "timestamp":               timestamp,
+            "username":                username,
+            "bullet_rating":           bullet,
+            "blitz_rating":            blitz,
+            "rapid_rating":            rapid,
+            "avg_bullet_blitz_rapid":  avg,
+            "puzzle_rating":           puzzle_r,
+            "puzzle_rating_deviation": puzzle_rd,
+            "puzzle_rating_progress":  puzzle_prog,
+            "puzzles_solved_total":    puzzle_total,
+            "storm_best_score":        storm,
+            "racer_best_score":        racer,
+        }
+
+    # ── Bulk fetch (max 300 per request) ────────────────────────────────────
+    fetched_usernames = set()
     for chunk in chunked(members, 300):
-        users = get_users_bulk(chunk)
+        try:
+            bulk_users = get_users_bulk(chunk)
+            for user in bulk_users:
+                row = process_user(user)
+                if row:
+                    rows.append(row)
+                    fetched_usernames.add(user.get("username",""))
+                    print(f"[OK]   {user.get('username')}: puzzles={row['puzzles_solved_total']}, rating={row['puzzle_rating']}")
+        except Exception as e:
+            print(f"[WARN] Bulk fetch failed for chunk: {e}. Will retry individually.")
 
-        for user in users:
-            username = user.get("username")
+    # ── Fallback: individually fetch any member the bulk missed ─────────────
+    missed = [m for m in members if m not in fetched_usernames and m not in already_recorded]
+    if missed:
+        print(f"[INFO] Fetching {len(missed)} missed members individually...")
+        for username in missed:
+            try:
+                url  = f"{BASE_URL}/user/{username}"
+                resp = fetch_with_retry(url, HEADERS)
+                user = resp.json()
+                row  = process_user(user)
+                if row:
+                    rows.append(row)
+                    print(f"[OK]   {username} (fallback): puzzles={row['puzzles_solved_total']}")
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"[WARN] Could not fetch {username}: {e}")
 
-            if username in already_recorded:
-                print(f"[SKIP] {username} already recorded")
-                continue
-
-            perfs = user.get("perfs", {})
-
-            bullet = safe_get(perfs, "bullet", "rating")
-            blitz  = safe_get(perfs, "blitz", "rating")
-            rapid  = safe_get(perfs, "rapid", "rating")
-
-            available = [r for r in [bullet, blitz, rapid] if r is not None]
-            avg = round(sum(available) / len(available), 1) if available else None
-
-            puzzle = perfs.get("puzzle", {})
-
-            puzzle_r    = puzzle.get("rating")
-            puzzle_rd   = puzzle.get("rd")
-            puzzle_prog = puzzle.get("prog")
-            puzzle_total= puzzle.get("games")
-
-            storm = safe_get(perfs, "storm", "score")
-            racer = safe_get(perfs, "racer", "score")
-
-
-
-            row = {
-                "timestamp": timestamp,
-                "username": username,
-                "bullet_rating": bullet,
-                "blitz_rating": blitz,
-                "rapid_rating": rapid,
-                "avg_bullet_blitz_rapid": avg,
-                "puzzle_rating": puzzle_r,
-                "puzzle_rating_deviation": puzzle_rd,
-                "puzzle_rating_progress": puzzle_prog,
-                "puzzles_solved_total": puzzle_total,
-                "storm_best_score": storm,
-                "racer_best_score": racer,
-            }
-
-            rows.append(row)
-
-            print(f"[INFO] {username}: puzzles={puzzle_total}, rating={puzzle_r}")
-
+    # ── Write results ────────────────────────────────────────────────────────
     if rows:
         with open(OUT_FILE, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
@@ -192,7 +213,8 @@ def main():
                 writer.writeheader()
             writer.writerows(rows)
 
-    print(f"\nDone. Wrote {len(rows)} rows.")
+    skipped = len(already_recorded)
+    print(f"\nDone. Wrote {len(rows)} rows, skipped {skipped} (already recorded this hour).")
 
 
 if __name__ == "__main__":
