@@ -6,63 +6,68 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 * * * *"   # jede volle Stunde
-  workflow_dispatch:        # manuell auslösbar
+    # ── Stündliches Stats-Update ─────────────────────────────────────────
+    - cron: "0 * * * *"
+    # ── Join-Detection alle 10 Minuten ──────────────────────────────────
+    # GitHub erlaubt min. 5-Minuten-Intervalle.
+    # Mit 6 Einträgen decken wir jede Stunde lückenlos ab:
+    - cron: "0  * * * *"
+    - cron: "10 * * * *"
+    - cron: "20 * * * *"
+    - cron: "30 * * * *"
+    - cron: "40 * * * *"
+    - cron: "50 * * * *"
+
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  fetch-and-commit:
+  # ── Job 1: Stündliches Stats-Update ──────────────────────────────────────
+  # Läuft nur zur vollen Stunde (wenn github.event.schedule == "0 * * * *")
+  # Bei workflow_dispatch läuft er immer.
+  update-stats:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '0 * * * *'
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Abhängigkeiten installieren
         run: pip install requests
 
-      - name: Fetch Lichess stats
+      - name: Stats abrufen
         env:
           LICHESS_API_KEY: ${{ secrets.LICHESS_API_KEY }}
         run: python fetch_lichess_stats.py
 
-      - name: Generate leaderboard
+      - name: Rangliste generieren
         run: python generate_leaderboard.py
 
-      - name: Commit and push
+      - name: Commit & Push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add data/
-
-          # Commit, but don't fail if nothing changed
-          git commit -m "chore: tactics snapshot $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes to commit"
-
-          # Retry push with rebase to handle parallel runs
+          git commit -m "chore: stats-update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "Keine Änderungen"
           for i in 1 2 3; do
             git pull --rebase origin main && git push origin main && break
-            echo "Push attempt $i failed, retrying..."
+            echo "Push-Versuch $i fehlgeschlagen, retry..."
             sleep $((i * 3))
           done
 
-      # Keep-alive: prevents GitHub from disabling scheduled workflows
-      # after 60 days of repo inactivity
-      - name: Keep workflow alive
+      - name: Workflow aktiv halten
         uses: actions/github-script@v7
-        if: github.event_name == 'schedule'
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -70,6 +75,44 @@ jobs:
             for (const wf of workflows.data.workflows) {
               if (wf.state === 'disabled_inactivity') {
                 await github.rest.actions.enableWorkflow({ owner, repo, workflow_id: wf.id });
-                console.log(`Re-enabled: ${wf.name}`);
+                console.log(`Reaktiviert: ${wf.name}`);
               }
             }
+
+  # ── Job 2: Join-Detection (alle 10 Minuten) ───────────────────────────────
+  # Läuft bei JEDEM Trigger — also auch zur vollen Stunde.
+  # Ist aber so schnell (prüft nur neue User), dass das kein Problem ist.
+  detect-joins:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: pip install requests
+
+      - name: Neue Mitglieder erkennen & Baseline speichern
+        env:
+          LICHESS_API_KEY: ${{ secrets.LICHESS_API_KEY }}
+        run: python detect_new_members.py
+
+      - name: Rangliste aktualisieren (falls neue Spieler)
+        run: python generate_leaderboard.py
+
+      - name: Commit & Push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "chore: join-detection $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "Keine neuen Mitglieder"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin main && break
+            sleep $((i * 3))
+          done
