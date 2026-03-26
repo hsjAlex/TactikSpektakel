@@ -1,32 +1,27 @@
 name: Lichess Tactics Tracker
 
-concurrency:
-  group: tactics-tracker
-  cancel-in-progress: false
-
 on:
   schedule:
-    # ── Stündliches Stats-Update ─────────────────────────────────────────
-    - cron: "0 * * * *"
-    # ── Join-Detection alle 10 Minuten ──────────────────────────────────
-    # GitHub erlaubt min. 5-Minuten-Intervalle.
-    # Mit 6 Einträgen decken wir jede Stunde lückenlos ab:
-    - cron: "0  * * * *"
-    - cron: "10 * * * *"
-    - cron: "20 * * * *"
-    - cron: "30 * * * *"
-    - cron: "40 * * * *"
-    - cron: "50 * * * *"
-
+    - cron: "0  * * * *"   # volle Stunde  → nur update-stats läuft
+    - cron: "10 * * * *"   # +10 min       → nur detect-joins läuft
+    - cron: "20 * * * *"   # +20 min
+    - cron: "30 * * * *"   # +30 min
+    - cron: "40 * * * *"   # +40 min
+    - cron: "50 * * * *"   # +50 min
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Verhindert parallele Runs komplett — zweiter Run wartet bis erster fertig ist
+concurrency:
+  group: tactics-tracker
+  cancel-in-progress: false
+
 jobs:
   # ── Job 1: Stündliches Stats-Update ──────────────────────────────────────
-  # Läuft nur zur vollen Stunde (wenn github.event.schedule == "0 * * * *")
-  # Bei workflow_dispatch läuft er immer.
+  # Läuft NUR zur vollen Stunde (cron "0 * * * *") oder bei manuellem Trigger.
+  # Bei den 10/20/30/40/50-Minuten-Crons wird er übersprungen.
   update-stats:
     if: |
       github.event_name == 'workflow_dispatch' ||
@@ -43,8 +38,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Abhängigkeiten installieren
-        run: pip install requests
+      - run: pip install requests
 
       - name: Stats abrufen
         env:
@@ -62,8 +56,8 @@ jobs:
           git commit -m "chore: stats-update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "Keine Änderungen"
           for i in 1 2 3; do
             git pull --rebase origin main && git push origin main && break
-            echo "Push-Versuch $i fehlgeschlagen, retry..."
-            sleep $((i * 3))
+            echo "Retry $i..."
+            sleep $((i * 5))
           done
 
       - name: Workflow aktiv halten
@@ -71,18 +65,24 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const workflows = await github.rest.actions.listRepoWorkflows({ owner, repo });
-            for (const wf of workflows.data.workflows) {
+            const wfs = await github.rest.actions.listRepoWorkflows({ owner, repo });
+            for (const wf of wfs.data.workflows) {
               if (wf.state === 'disabled_inactivity') {
                 await github.rest.actions.enableWorkflow({ owner, repo, workflow_id: wf.id });
                 console.log(`Reaktiviert: ${wf.name}`);
               }
             }
 
-  # ── Job 2: Join-Detection (alle 10 Minuten) ───────────────────────────────
-  # Läuft bei JEDEM Trigger — also auch zur vollen Stunde.
-  # Ist aber so schnell (prüft nur neue User), dass das kein Problem ist.
+  # ── Job 2: Join-Detection (alle 10 Minuten, NICHT zur vollen Stunde) ─────
+  # Zur vollen Stunde übernimmt update-stats das Erfassen aller Spieler,
+  # daher ist detect-joins dort überflüssig und würde nur Konflikte erzeugen.
   detect-joins:
+    if: |
+      github.event.schedule == '10 * * * *' ||
+      github.event.schedule == '20 * * * *' ||
+      github.event.schedule == '30 * * * *' ||
+      github.event.schedule == '40 * * * *' ||
+      github.event.schedule == '50 * * * *'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -95,15 +95,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Abhängigkeiten installieren
-        run: pip install requests
+      - run: pip install requests
 
       - name: Neue Mitglieder erkennen & Baseline speichern
         env:
           LICHESS_API_KEY: ${{ secrets.LICHESS_API_KEY }}
         run: python detect_new_members.py
 
-      - name: Rangliste aktualisieren (falls neue Spieler)
+      - name: Rangliste aktualisieren
         run: python generate_leaderboard.py
 
       - name: Commit & Push
@@ -114,5 +113,6 @@ jobs:
           git commit -m "chore: join-detection $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "Keine neuen Mitglieder"
           for i in 1 2 3; do
             git pull --rebase origin main && git push origin main && break
-            sleep $((i * 3))
+            echo "Retry $i..."
+            sleep $((i * 5))
           done
