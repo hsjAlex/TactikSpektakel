@@ -2,30 +2,27 @@ name: Lichess Tactics Tracker
 
 on:
   schedule:
-    - cron: "0  * * * *"   # volle Stunde  → nur update-stats läuft
-    - cron: "10 * * * *"   # +10 min       → nur detect-joins läuft
-    - cron: "20 * * * *"   # +20 min
-    - cron: "30 * * * *"   # +30 min
-    - cron: "40 * * * *"   # +40 min
-    - cron: "50 * * * *"   # +50 min
+    - cron: "0  * * * *"   # volle Stunde
+    - cron: "10 * * * *"
+    - cron: "20 * * * *"
+    - cron: "30 * * * *"
+    - cron: "40 * * * *"
+    - cron: "50 * * * *"
   workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# Verhindert parallele Runs komplett — zweiter Run wartet bis erster fertig ist
+# Nie zwei Runs gleichzeitig — zweiter wartet bis erster fertig
 concurrency:
   group: tactics-tracker
   cancel-in-progress: false
 
 jobs:
-  # ── Job 1: Stündliches Stats-Update ──────────────────────────────────────
-  # Läuft NUR zur vollen Stunde (cron "0 * * * *") oder bei manuellem Trigger.
-  # Bei den 10/20/30/40/50-Minuten-Crons wird er übersprungen.
+  # ── Stats-Update: läuft zur vollen Stunde ─────────────────────────────────
+  # KEIN if-Filter mehr — stattdessen prüft das Skript selbst ob es
+  # bereits einen Run in dieser Stunde gab und überspringt dann.
   update-stats:
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      github.event.schedule == '0 * * * *'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,15 +37,31 @@ jobs:
 
       - run: pip install requests
 
+      - name: Prüfe ob Stats-Update nötig ist
+        id: check
+        run: |
+          # Läuft nur zur vollen Stunde (Minute == 0) oder bei manuellem Trigger
+          MINUTE=$(date -u +%M)
+          if [ "$MINUTE" = "05" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+            echo "Minute=$MINUTE → Stats-Update wird ausgeführt."
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+            echo "Minute=$MINUTE → Kein Stats-Update (nur zur vollen Stunde)."
+          fi
+
       - name: Stats abrufen
+        if: steps.check.outputs.run == 'true'
         env:
           LICHESS_API_KEY: ${{ secrets.LICHESS_API_KEY }}
         run: python fetch_lichess_stats.py
 
       - name: Rangliste generieren
+        if: steps.check.outputs.run == 'true'
         run: python generate_leaderboard.py
 
       - name: Commit & Push
+        if: steps.check.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -61,6 +74,7 @@ jobs:
           done
 
       - name: Workflow aktiv halten
+        if: steps.check.outputs.run == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -73,16 +87,8 @@ jobs:
               }
             }
 
-  # ── Job 2: Join-Detection (alle 10 Minuten, NICHT zur vollen Stunde) ─────
-  # Zur vollen Stunde übernimmt update-stats das Erfassen aller Spieler,
-  # daher ist detect-joins dort überflüssig und würde nur Konflikte erzeugen.
+  # ── Join-Detection: läuft alle 10 Minuten AUSSER zur vollen Stunde ────────
   detect-joins:
-    if: |
-      github.event.schedule == '10 * * * *' ||
-      github.event.schedule == '20 * * * *' ||
-      github.event.schedule == '30 * * * *' ||
-      github.event.schedule == '40 * * * *' ||
-      github.event.schedule == '50 * * * *'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -97,15 +103,30 @@ jobs:
 
       - run: pip install requests
 
+      - name: Prüfe ob Join-Detection nötig ist
+        id: check
+        run: |
+          MINUTE=$(date -u +%M)
+          if [ "$MINUTE" = "00" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "run=false" >> $GITHUB_OUTPUT
+            echo "Minute=$MINUTE → Übersprungen (update-stats übernimmt zur vollen Stunde)."
+          else
+            echo "run=true" >> $GITHUB_OUTPUT
+            echo "Minute=$MINUTE → Join-Detection wird ausgeführt."
+          fi
+
       - name: Neue Mitglieder erkennen & Baseline speichern
+        if: steps.check.outputs.run == 'true'
         env:
           LICHESS_API_KEY: ${{ secrets.LICHESS_API_KEY }}
         run: python detect_new_members.py
 
       - name: Rangliste aktualisieren
+        if: steps.check.outputs.run == 'true'
         run: python generate_leaderboard.py
 
       - name: Commit & Push
+        if: steps.check.outputs.run == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
